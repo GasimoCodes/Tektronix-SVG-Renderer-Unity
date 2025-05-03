@@ -278,6 +278,31 @@ MonoBehaviour:
   gradientEndColor: {r: 0, g: 2.4622886, b: 0, a: 1}
   lineWidthPixels: 4
   useElementColors: 1
+  fadeOutDuration: 2
+  fadeOutCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
   lineDrawingShader: {fileID: 7200000, guid: fcd873ebaf853474fbcae301030dd7bf, type: 3}
   outputTexture: {fileID: 8400000, guid: 0764b8675880cd6468b89427060ae8db, type: 2}
 --- !u!1 &410087039
