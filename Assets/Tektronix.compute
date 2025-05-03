@@ -3,6 +3,7 @@
 // Buffers
 StructuredBuffer<float2> points; // List of all points
 StructuredBuffer<int> path; // Indices of points forming the path
+StructuredBuffer<float4> pointColors; // Colors for each point (optional)
 
 // Parameters
 int pointCount;
@@ -11,6 +12,7 @@ float lineWidthPixels;
 float4 startColor;
 float4 endColor;
 float4 solidColor;
+int useElementColors; // Whether to use element colors
 
 // Output
 RWTexture2D<float4> Result;
@@ -38,6 +40,12 @@ float GetHDRIntensity(int lineIndex, int currentIndex)
         return 1.2; // Slightly bright
     else
         return 1.0; // Standard brightness
+}
+
+// Helper function to check if a color is black
+bool IsBlack(float4 color)
+{
+    return color.r < 0.01 && color.g < 0.01 && color.b < 0.01;
 }
 
 [numthreads(64, 1, 1)]
@@ -72,22 +80,70 @@ void CSDrawLines(uint3 id : SV_DispatchThreadID)
     if (len < 0.001)
         return;
         
-    dir = dir / len;  // Normalize
+    dir = dir / len; // Normalize
+    
+    // Get segment color if enabled
+    float4 segmentColor = float4(0, 0, 0, 1);
+    bool useDefault = true;
+    
+    if (useElementColors > 0)
+    {
+        float4 pointStartColor = pointColors[startIndex];
+        float4 pointEndColor = pointColors[endIndex];
+        
+        // Use point colors if not black (use average color if they differ)
+        bool startIsBlack = IsBlack(pointStartColor);
+        bool endIsBlack = IsBlack(pointEndColor);
+        
+        if (!startIsBlack || !endIsBlack)
+        {
+            if (!startIsBlack && !endIsBlack)
+            {
+                // Average the colors
+                segmentColor = (pointStartColor + pointEndColor) * 0.5;
+            }
+            else if (!startIsBlack)
+            {
+                segmentColor = pointStartColor;
+            }
+            else
+            {
+                segmentColor = pointEndColor;
+            }
+            useDefault = false;
+        }
+    }
     
     // Determine the color for the line with HDR intensity
     float4 lineColor;
     float hdrIntensity = GetHDRIntensity(idx, currentLineIndex);
     
-    // Newest lines get gradient colors
-    if (idx > currentLineIndex - 5)
+    if (useDefault)
     {
-        float t = (float)(idx - (currentLineIndex - 5)) / 5.0;
-        lineColor = lerp(endColor, startColor, t) * hdrIntensity;
+        // Use default colors
+        if (idx > currentLineIndex - 5)
+        {
+            // Newest lines get gradient colors
+            float t = (float) (idx - (currentLineIndex - 5)) / 5.0;
+            lineColor = lerp(endColor, startColor, t) * hdrIntensity;
+        }
+        else
+        {
+            // Older lines get solid color
+            lineColor = solidColor * hdrIntensity * 0.8; // Slightly dimmer for older lines
+        }
     }
     else
     {
-        // Older lines get solid color
-        lineColor = solidColor * hdrIntensity * 0.8; // Slightly dimmer for older lines
+        // Use element color with appropriate intensity
+        if (idx > currentLineIndex - 5)
+        {
+            lineColor = segmentColor * hdrIntensity * 1.2; // Enhance element color for newest lines
+        }
+        else
+        {
+            lineColor = segmentColor * hdrIntensity * 0.8; // Slightly dimmer for older lines
+        }
     }
     
     // Always ensure alpha is 1.0
@@ -135,14 +191,17 @@ void CSDrawLines(uint3 id : SV_DispatchThreadID)
                     float blendFactor = idx > currentLineIndex - 3 ? 0.95 : 0.8;
                     
                     // For HDR bloom effect, use additive blending for newest lines
-                    if (idx > currentLineIndex - 2) {
+                    if (idx > currentLineIndex - 2)
+                    {
                         Result[drawPos] = float4(
-                            max(existingColor.r, newColor.r), 
+                            max(existingColor.r, newColor.r),
                             max(existingColor.g, newColor.g),
                             max(existingColor.b, newColor.b),
                             1.0
                         );
-                    } else {
+                    }
+                    else
+                    {
                         // Standard blend for older lines
                         Result[drawPos] = float4(
                             lerp(existingColor.rgb, newColor.rgb, blendFactor),

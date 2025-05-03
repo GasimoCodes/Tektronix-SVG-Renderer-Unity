@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 using System.Xml;
+using System.Globalization;
 
 [RequireComponent(typeof(Camera))]
 public class TektronixSVGRenderer : MonoBehaviour
@@ -11,10 +12,11 @@ public class TektronixSVGRenderer : MonoBehaviour
 
     [Header("Drawing Settings")]
     [SerializeField] private float drawSpeed = 10.0f; // Lines per second
-    [SerializeField] private Color solidColor = Color.green; // Solid color for previous lines
-    [SerializeField] private Color gradientStartColor = Color.white; // Gradient start color
-    [SerializeField] private Color gradientEndColor = Color.green;   // Gradient end color
+    [SerializeField] private Color solidColor = Color.green; // Solid color for previous lines (fallback)
+    [SerializeField] private Color gradientStartColor = Color.white; // Gradient start color (fallback)
+    [SerializeField] private Color gradientEndColor = Color.green;   // Gradient end color (fallback)
     [SerializeField] private float lineWidthPixels = 2.0f; // Line thickness in pixels
+    [SerializeField] private bool useElementColors = true; // Whether to use colors from SVG elements
 
     [Header("Compute Shader")]
     [SerializeField] private ComputeShader lineDrawingShader;
@@ -24,8 +26,10 @@ public class TektronixSVGRenderer : MonoBehaviour
 
     private List<Vector2> points = new List<Vector2>();
     private List<int> optimizedPath = new List<int>();
+    private List<Color> pointColors = new List<Color>(); // Colors for each point
     private ComputeBuffer pointsBuffer;
     private ComputeBuffer pathBuffer;
+    private ComputeBuffer colorBuffer; // New buffer for colors
     private int kernelHandle;
     private int currentLineIndex = 0;
     private float drawTimer = 0f;
@@ -72,8 +76,7 @@ public class TektronixSVGRenderer : MonoBehaviour
         Debug.Log("HDR render texture configured successfully");
     }
 
-
-    // Update the Update method to ensure alpha is always 1.0
+    // Update the Update method to use element colors when available
     private void Update()
     {
         if (currentLineIndex < optimizedPath.Count - 1)
@@ -100,6 +103,7 @@ public class TektronixSVGRenderer : MonoBehaviour
                 lineDrawingShader.SetVector("startColor", (Vector4)startColorOpaque);
                 lineDrawingShader.SetVector("endColor", (Vector4)endColorOpaque);
                 lineDrawingShader.SetVector("solidColor", (Vector4)solidColorOpaque);
+                lineDrawingShader.SetInt("useElementColors", useElementColors ? 1 : 0);
 
                 // Calculate correct dispatch size
                 int dispatchSize = Mathf.Max(1, Mathf.CeilToInt(currentLineIndex / 64.0f));
@@ -108,10 +112,76 @@ public class TektronixSVGRenderer : MonoBehaviour
         }
     }
 
-
     private void OnDestroy()
     {
         ReleaseBuffers();
+    }
+
+    // Parse color from SVG hex string
+    private Color ParseColor(string colorStr)
+    {
+        if (string.IsNullOrEmpty(colorStr))
+            return Color.black;
+
+        // Handle named colors
+        if (colorStr.ToLower() == "black") return Color.black;
+        if (colorStr.ToLower() == "white") return Color.white;
+        if (colorStr.ToLower() == "red") return Color.red;
+        if (colorStr.ToLower() == "green") return Color.green;
+        if (colorStr.ToLower() == "blue") return Color.blue;
+        if (colorStr.ToLower() == "yellow") return Color.yellow;
+        if (colorStr.ToLower() == "cyan") return Color.cyan;
+        if (colorStr.ToLower() == "magenta") return Color.magenta;
+        if (colorStr.ToLower() == "gray" || colorStr.ToLower() == "grey") return Color.gray;
+
+        // Remove any leading # character
+        if (colorStr.StartsWith("#"))
+            colorStr = colorStr.Substring(1);
+
+        try
+        {
+            // Handle short form (#RGB)
+            if (colorStr.Length == 3)
+            {
+                string r = colorStr.Substring(0, 1);
+                string g = colorStr.Substring(1, 1);
+                string b = colorStr.Substring(2, 1);
+                colorStr = r + r + g + g + b + b;
+            }
+
+            // Check if the string is valid hex
+            if (colorStr.Length != 6 || !System.Text.RegularExpressions.Regex.IsMatch(colorStr, "^[0-9A-Fa-f]{6}$"))
+            {
+                Debug.LogWarning($"Invalid color format: '{colorStr}'. Defaulting to black.");
+                return Color.black;
+            }
+
+            // Parse as hex
+            int hexValue;
+            if (int.TryParse(colorStr, System.Globalization.NumberStyles.HexNumber, null, out hexValue))
+            {
+                float r = ((hexValue >> 16) & 0xFF) / 255f;
+                float g = ((hexValue >> 8) & 0xFF) / 255f;
+                float b = (hexValue & 0xFF) / 255f;
+                return new Color(r, g, b, 1f);
+            }
+            else
+            {
+                Debug.LogWarning($"Failed to parse color: '{colorStr}'. Defaulting to black.");
+                return Color.black;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"Error parsing color '{colorStr}': {e.Message}. Defaulting to black.");
+            return Color.black;
+        }
+    }
+
+    // Check if a color is black (#000000)
+    private bool IsBlack(Color color)
+    {
+        return color.r < 0.01f && color.g < 0.01f && color.b < 0.01f;
     }
 
     private void ParseSVG()
@@ -126,6 +196,14 @@ public class TektronixSVGRenderer : MonoBehaviour
             string dAttribute = pathNode.Attributes["d"]?.Value;
             if (!string.IsNullOrEmpty(dAttribute))
             {
+                // Try to get stroke color
+                string strokeAttr = pathNode.Attributes["stroke"]?.Value;
+                Color strokeColor = Color.black;
+                if (!string.IsNullOrEmpty(strokeAttr))
+                {
+                    strokeColor = ParseColor(strokeAttr);
+                }
+
                 SVGPathParser parser = new SVGPathParser();
                 List<Vector2[]> segments = parser.ParsePath(dAttribute);
 
@@ -135,6 +213,10 @@ public class TektronixSVGRenderer : MonoBehaviour
                     {
                         points.Add(segment[i]);
                         points.Add(segment[i + 1]);
+
+                        // Add color for both points
+                        pointColors.Add(strokeColor);
+                        pointColors.Add(strokeColor);
                     }
                 }
             }
@@ -149,8 +231,20 @@ public class TektronixSVGRenderer : MonoBehaviour
             float x2 = float.Parse(lineNode.Attributes["x2"].Value);
             float y2 = float.Parse(lineNode.Attributes["y2"].Value);
 
+            // Get stroke color
+            string strokeAttr = lineNode.Attributes["stroke"]?.Value;
+            Color strokeColor = Color.black;
+            if (!string.IsNullOrEmpty(strokeAttr))
+            {
+                strokeColor = ParseColor(strokeAttr);
+            }
+
             points.Add(new Vector2(x1, y1));
             points.Add(new Vector2(x2, y2));
+
+            // Add color for both points
+            pointColors.Add(strokeColor);
+            pointColors.Add(strokeColor);
         }
 
         // Parse <rect> elements
@@ -162,26 +256,38 @@ public class TektronixSVGRenderer : MonoBehaviour
             float width = float.Parse(rectNode.Attributes["width"].Value);
             float height = float.Parse(rectNode.Attributes["height"].Value);
 
+            // Get stroke color
+            string strokeAttr = rectNode.Attributes["stroke"]?.Value;
+            Color strokeColor = Color.black;
+            if (!string.IsNullOrEmpty(strokeAttr))
+            {
+                strokeColor = ParseColor(strokeAttr);
+            }
+
             // Add rectangle edges as lines
             points.Add(new Vector2(x, y));
             points.Add(new Vector2(x + width, y));
+            pointColors.Add(strokeColor);
+            pointColors.Add(strokeColor);
 
             points.Add(new Vector2(x + width, y));
             points.Add(new Vector2(x + width, y + height));
+            pointColors.Add(strokeColor);
+            pointColors.Add(strokeColor);
 
             points.Add(new Vector2(x + width, y + height));
             points.Add(new Vector2(x, y + height));
+            pointColors.Add(strokeColor);
+            pointColors.Add(strokeColor);
 
             points.Add(new Vector2(x, y + height));
             points.Add(new Vector2(x, y));
+            pointColors.Add(strokeColor);
+            pointColors.Add(strokeColor);
         }
 
         Debug.Log($"Parsed {points.Count} points from SVG.");
     }
-
-
-
-
 
     private void NormalizePointsToFitTexture()
     {
@@ -215,8 +321,6 @@ public class TektronixSVGRenderer : MonoBehaviour
         }
     }
 
-
-
     private void OptimizePath()
     {
         // Group points into subpaths
@@ -235,9 +339,6 @@ public class TektronixSVGRenderer : MonoBehaviour
         }
     }
 
-
-
-    // Update the setup method to ensure alpha is correctly set
     private void SetupComputeShader()
     {
         kernelHandle = lineDrawingShader.FindKernel("CSDrawLines");
@@ -250,6 +351,14 @@ public class TektronixSVGRenderer : MonoBehaviour
         pathBuffer = new ComputeBuffer(optimizedPath.Count, sizeof(int));
         pathBuffer.SetData(optimizedPath);
 
+        // Create and set the color buffer
+        if (pointColors.Count > 0)
+        {
+            colorBuffer = new ComputeBuffer(pointColors.Count, sizeof(float) * 4);
+            colorBuffer.SetData(pointColors);
+            lineDrawingShader.SetBuffer(kernelHandle, "pointColors", colorBuffer);
+        }
+
         // Ensure the output texture is configured for random write
         if (!outputTexture.IsCreated())
             outputTexture.Create();
@@ -260,7 +369,6 @@ public class TektronixSVGRenderer : MonoBehaviour
         lineDrawingShader.SetInt("pointCount", points.Count);
         lineDrawingShader.SetFloat("lineWidthPixels", lineWidthPixels);
     }
-
 
     // Update clear method for HDR
     private void ClearRenderTexture()
@@ -275,5 +383,6 @@ public class TektronixSVGRenderer : MonoBehaviour
     {
         if (pointsBuffer != null) pointsBuffer.Release();
         if (pathBuffer != null) pathBuffer.Release();
+        if (colorBuffer != null) colorBuffer.Release();
     }
 }
