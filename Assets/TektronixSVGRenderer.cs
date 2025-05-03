@@ -8,12 +8,15 @@ public class TektronixSVGRenderer : MonoBehaviour
 {
     [Header("SVG Input")]
     [SerializeField] private TextAsset svgFile;
+    [SerializeField] private string svgFilePath; // New field for SVG file path
     [SerializeField] private float scaleFactor = 1.0f;
 
     [Header("Drawing Settings")]
     [SerializeField] private float drawSpeed = 10.0f; // Lines per second
-    [SerializeField] private Color solidColor = Color.green; // Solid color for previous lines (fallback)
+    [ColorUsage(true, true)][SerializeField] private Color solidColor = Color.green; // Solid color for previous lines (fallback)
+    [ColorUsage(true, true)]
     [SerializeField] private Color gradientStartColor = Color.white; // Gradient start color (fallback)
+    [ColorUsage(true, true)]
     [SerializeField] private Color gradientEndColor = Color.green;   // Gradient end color (fallback)
     [SerializeField] private float lineWidthPixels = 2.0f; // Line thickness in pixels
     [SerializeField] private bool useElementColors = true; // Whether to use colors from SVG elements
@@ -36,9 +39,9 @@ public class TektronixSVGRenderer : MonoBehaviour
 
     private void Start()
     {
-        if (svgFile == null || lineDrawingShader == null || outputTexture == null)
+        if ((string.IsNullOrEmpty(svgFilePath) && svgFile == null) || lineDrawingShader == null || outputTexture == null)
         {
-            Debug.LogError("SVG file, Compute Shader, or Output Texture is missing!");
+            Debug.LogError("SVG file, SVG file path, Compute Shader, or Output Texture is missing!");
             return;
         }
 
@@ -187,7 +190,29 @@ public class TektronixSVGRenderer : MonoBehaviour
     private void ParseSVG()
     {
         XmlDocument doc = new XmlDocument();
-        doc.LoadXml(svgFile.text);
+
+        // Load SVG from file path if provided, otherwise use TextAsset
+        if (!string.IsNullOrEmpty(svgFilePath))
+        {
+            try
+            {
+                doc.Load(svgFilePath);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"Failed to load SVG from path '{svgFilePath}': {e.Message}");
+                return;
+            }
+        }
+        else if (svgFile != null)
+        {
+            doc.LoadXml(svgFile.text);
+        }
+        else
+        {
+            Debug.LogError("No SVG file or path provided.");
+            return;
+        }
 
         // Parse <path> elements
         XmlNodeList paths = doc.GetElementsByTagName("path");
