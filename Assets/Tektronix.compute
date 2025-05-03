@@ -1,0 +1,156 @@
+#pragma kernel CSDrawLines
+
+// Buffers
+StructuredBuffer<float2> points; // List of all points
+StructuredBuffer<int> path; // Indices of points forming the path
+
+// Parameters
+int pointCount;
+int currentLineIndex;
+float lineWidthPixels;
+float4 startColor;
+float4 endColor;
+float4 solidColor;
+
+// Output
+RWTexture2D<float4> Result;
+
+// Helper function for anti-aliased pixel intensity
+float PixelIntensity(float dist, float lineWidth)
+{
+    float halfWidth = lineWidth * 0.5;
+    return saturate(1.0 - smoothstep(halfWidth - 0.5, halfWidth + 0.5, dist));
+}
+
+// Helper function to ensure alpha is always 1.0
+float4 EnsureOpaque(float4 color)
+{
+    return float4(color.rgb, 1.0);
+}
+
+// Helper function to get HDR intensity multiplier
+float GetHDRIntensity(int lineIndex, int currentIndex)
+{
+    // Most recent lines are brightest (HDR values above 1.0)
+    if (lineIndex > currentIndex - 3)
+        return 1.5; // Brighter than standard range
+    else if (lineIndex > currentIndex - 8)
+        return 1.2; // Slightly bright
+    else
+        return 1.0; // Standard brightness
+}
+
+[numthreads(64, 1, 1)]
+void CSDrawLines(uint3 id : SV_DispatchThreadID)
+{
+    uint idx = id.x;
+    
+    // Skip if thread index is out of bounds
+    if (idx >= currentLineIndex)
+        return;
+        
+    int startIndex = path[idx];
+    int endIndex = path[idx + 1];
+    
+    // Skip rendering if a break marker (-1) is encountered
+    if (startIndex == -1 || endIndex == -1)
+        return;
+        
+    // Get the points for this line segment
+    float2 start = points[startIndex];
+    float2 end = points[endIndex];
+    
+    // Skip invalid indices
+    if (startIndex >= pointCount || endIndex >= pointCount)
+        return;
+    
+    // Determine line properties
+    float2 dir = end - start;
+    float len = length(dir);
+    
+    // Skip if length is too small
+    if (len < 0.001)
+        return;
+        
+    dir = dir / len;  // Normalize
+    
+    // Determine the color for the line with HDR intensity
+    float4 lineColor;
+    float hdrIntensity = GetHDRIntensity(idx, currentLineIndex);
+    
+    // Newest lines get gradient colors
+    if (idx > currentLineIndex - 5)
+    {
+        float t = (float)(idx - (currentLineIndex - 5)) / 5.0;
+        lineColor = lerp(endColor, startColor, t) * hdrIntensity;
+    }
+    else
+    {
+        // Older lines get solid color
+        lineColor = solidColor * hdrIntensity * 0.8; // Slightly dimmer for older lines
+    }
+    
+    // Always ensure alpha is 1.0
+    lineColor.a = 1.0;
+    
+    // Draw the line with adaptive step size
+    float step = min(0.5, 1.0 / max(len, 1.0));
+    
+    for (float t = 0.0; t <= 1.0; t += step)
+    {
+        float2 pos = lerp(start, end, t);
+        int2 pixel = int2(pos);
+        
+        // Draw with thickness and anti-aliasing
+        float halfWidth = lineWidthPixels * 0.5;
+        int radius = int(ceil(halfWidth + 1.0));
+        
+        for (int dy = -radius; dy <= radius; dy++)
+        {
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                float dist = length(float2(dx, dy));
+                float intensity = PixelIntensity(dist, lineWidthPixels);
+                
+                // Add extra glow for newest lines (HDR glow)
+                if (idx >= currentLineIndex - 3)
+                {
+                    float glowIntensity = saturate((1.0 - dist / (lineWidthPixels + 2.0)) * 0.5);
+                    intensity = max(intensity, glowIntensity);
+                }
+                
+                if (intensity > 0.01)
+                {
+                    int2 drawPos = pixel + int2(dx, dy);
+                    
+                    // Get existing color for burn-in effect
+                    float4 existingColor = Result[drawPos];
+                    float4 newColor = lineColor * intensity;
+                    
+                    // Always ensure alpha is 1.0
+                    newColor.a = 1.0;
+                    existingColor.a = 1.0;
+                    
+                    // Newest lines are more opaque and brighter (HDR)
+                    float blendFactor = idx > currentLineIndex - 3 ? 0.95 : 0.8;
+                    
+                    // For HDR bloom effect, use additive blending for newest lines
+                    if (idx > currentLineIndex - 2) {
+                        Result[drawPos] = float4(
+                            max(existingColor.r, newColor.r), 
+                            max(existingColor.g, newColor.g),
+                            max(existingColor.b, newColor.b),
+                            1.0
+                        );
+                    } else {
+                        // Standard blend for older lines
+                        Result[drawPos] = float4(
+                            lerp(existingColor.rgb, newColor.rgb, blendFactor),
+                            1.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
