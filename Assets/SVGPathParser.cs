@@ -13,9 +13,9 @@ public class SVGPathParser
     {
         pathData = data;
         index = 0;
-        currentCommand = 'M';
         currentPoint = Vector2.zero;
         subpathStart = Vector2.zero;
+        currentCommand = 'M';
 
         List<Vector2[]> segments = new List<Vector2[]>();
         List<Vector2> currentSegment = new List<Vector2>();
@@ -35,67 +35,84 @@ public class SVGPathParser
                 index++;
             }
 
-            switch (currentCommand)
+            bool relative = char.IsLower(currentCommand);
+
+            switch (char.ToUpper(currentCommand))
             {
-                case 'M': // MoveTo absolute
-                case 'm': // MoveTo relative
-                    if (currentSegment.Count > 1)
-                    {
-                        segments.Add(currentSegment.ToArray());
-                        currentSegment = new List<Vector2>();
-                    }
-                    MoveTo(currentCommand == 'm');
-                    currentSegment.Add(currentPoint);
-                    break;
-
-                case 'L': // LineTo absolute
-                case 'l': // LineTo relative
-                    LineTo(currentCommand == 'l');
-                    currentSegment.Add(currentPoint);
-                    break;
-
-                case 'H': // Horizontal line absolute
-                case 'h': // Horizontal line relative
-                    HorizontalLineTo(currentCommand == 'h');
-                    currentSegment.Add(currentPoint);
-                    break;
-
-                case 'V': // Vertical line absolute
-                case 'v': // Vertical line relative
-                    VerticalLineTo(currentCommand == 'v');
-                    currentSegment.Add(currentPoint);
-                    break;
-
-                case 'Z': // Close path
-                case 'z':
+                case 'M': // MoveTo
+                          // If we have points in the current segment, add it to segments
                     if (currentSegment.Count > 0)
                     {
-                        currentSegment.Add(subpathStart);
                         segments.Add(currentSegment.ToArray());
                         currentSegment = new List<Vector2>();
                     }
-                    currentPoint = subpathStart;
-                    index++;
+
+                    currentPoint = ParsePoint(relative);
+                    subpathStart = currentPoint;
+                    currentSegment.Add(currentPoint);
+
+                    // After a MoveTo command, the command automatically changes to LineTo
+                    currentCommand = relative ? 'l' : 'L';
                     break;
 
-                case 'C': // Cubic bezier absolute
-                case 'c': // Cubic bezier relative
-                    CubicBezierTo(currentCommand == 'c', segments, ref currentSegment);
+                case 'L': // LineTo
+                    currentPoint = ParsePoint(relative);
+                    currentSegment.Add(currentPoint);
                     break;
 
-                case 'Q': // Quadratic bezier absolute
-                case 'q': // Quadratic bezier relative
-                    QuadraticBezierTo(currentCommand == 'q', segments, ref currentSegment);
+                case 'H': // Horizontal LineTo
+                    float x = ParseFloat();
+                    if (relative)
+                        currentPoint.x += x;
+                    else
+                        currentPoint.x = x;
+
+                    currentSegment.Add(currentPoint);
+                    break;
+
+                case 'V': // Vertical LineTo
+                    float y = ParseFloat();
+                    if (relative)
+                        currentPoint.y += y;
+                    else
+                        currentPoint.y = y;
+
+                    currentSegment.Add(currentPoint);
+                    break;
+
+                case 'Z': // ClosePath
+                          // Add the subpath start to close the path
+                    if (currentSegment.Count > 0 && !ArePointsEqual(currentPoint, subpathStart))
+                    {
+                        currentSegment.Add(subpathStart);
+                        currentPoint = subpathStart;
+                    }
+
+                    // Add the current segment to segments and start a new segment
+                    if (currentSegment.Count > 0)
+                    {
+                        segments.Add(currentSegment.ToArray());
+                        currentSegment = new List<Vector2>();
+                    }
+                    break;
+
+                case 'C': // Cubic Bezier
+                    CubicBezierTo(relative, currentSegment);
+                    break;
+
+                case 'Q': // Quadratic Bezier
+                    QuadraticBezierTo(relative, currentSegment);
                     break;
 
                 default:
+                    // Skip unknown commands
                     index++;
                     break;
             }
         }
 
-        // Add final segment
-        if (currentSegment.Count > 1)
+        // Add any remaining segment
+        if (currentSegment.Count > 0)
         {
             segments.Add(currentSegment.ToArray());
         }
@@ -129,71 +146,9 @@ public class SVGPathParser
 
         return float.Parse(number);
     }
+   
 
-    private void MoveTo(bool relative)
-    {
-        float x = ParseFloat();
-        float y = ParseFloat();
-
-        if (relative)
-        {
-            currentPoint += new Vector2(x, y);
-        }
-        else
-        {
-            currentPoint = new Vector2(x, y);
-        }
-
-        subpathStart = currentPoint;
-
-        // After a MoveTo, subsequent coordinate pairs are treated as implicit LineTo commands
-        currentCommand = relative ? 'l' : 'L';
-    }
-
-    private void LineTo(bool relative)
-    {
-        float x = ParseFloat();
-        float y = ParseFloat();
-
-        if (relative)
-        {
-            currentPoint += new Vector2(x, y);
-        }
-        else
-        {
-            currentPoint = new Vector2(x, y);
-        }
-    }
-
-    private void HorizontalLineTo(bool relative)
-    {
-        float x = ParseFloat();
-
-        if (relative)
-        {
-            currentPoint.x += x;
-        }
-        else
-        {
-            currentPoint.x = x;
-        }
-    }
-
-    private void VerticalLineTo(bool relative)
-    {
-        float y = ParseFloat();
-
-        if (relative)
-        {
-            currentPoint.y += y;
-        }
-        else
-        {
-            currentPoint.y = y;
-        }
-    }
-
-    private void CubicBezierTo(bool relative, List<Vector2[]> segments, ref List<Vector2> currentSegment)
+    private void CubicBezierTo(bool relative, List<Vector2> currentSegment)
     {
         Vector2 control1 = ParsePoint(relative);
         Vector2 control2 = ParsePoint(relative);
@@ -213,10 +168,14 @@ public class SVGPathParser
             currentSegment.Add(point);
         }
 
+        // Finalize the current segment
+        currentSegment.Add(endPoint);
         currentPoint = endPoint;
     }
 
-    private void QuadraticBezierTo(bool relative, List<Vector2[]> segments, ref List<Vector2> currentSegment)
+
+
+    private void QuadraticBezierTo(bool relative, List<Vector2> currentSegment)
     {
         Vector2 control = ParsePoint(relative);
         Vector2 endPoint = ParsePoint(relative);
@@ -234,8 +193,11 @@ public class SVGPathParser
             currentSegment.Add(point);
         }
 
+        // Finalize the current segment
+        currentSegment.Add(endPoint);
         currentPoint = endPoint;
     }
+
 
     private Vector2 ParsePoint(bool relative)
     {
@@ -251,4 +213,11 @@ public class SVGPathParser
             return new Vector2(x, y);
         }
     }
+
+    // Helper method to compare points with a small epsilon for floating point comparison
+    private bool ArePointsEqual(Vector2 p1, Vector2 p2, float epsilon = 0.001f)
+    {
+        return Vector2.Distance(p1, p2) < epsilon;
+    }
 }
+

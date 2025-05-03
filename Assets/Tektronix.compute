@@ -12,7 +12,6 @@ float lineWidthPixels;
 float4 startColor;
 float4 endColor;
 float4 solidColor;
-int useElementColors; // Whether to use element colors
 
 // Output
 RWTexture2D<float4> Result;
@@ -93,260 +92,74 @@ float4 GetPhosphorTransitionColor(float4 prevColor, float4 currentColor, float a
 void CSDrawLines(uint3 id : SV_DispatchThreadID)
 {
     uint idx = id.x;
-    
-    // Skip if thread index is out of bounds
-    if (idx >= currentLineIndex)
+
+    // Extend the range to include 10 additional points in the past
+    if (idx < max(0, currentLineIndex - 100) || idx >= currentLineIndex)
         return;
-        
+
     int startIndex = path[idx];
     int endIndex = path[idx + 1];
-    
+
     // Skip rendering if a break marker (-1) is encountered
-    if (startIndex == -1 || endIndex == -1)
+    if (startIndex == -1 || endIndex == -1 || startIndex >= pointCount || endIndex >= pointCount)
         return;
-        
-    // Get the points for this line segment
+
     float2 start = points[startIndex];
     float2 end = points[endIndex];
-    
-    // Skip invalid indices
-    if (startIndex >= pointCount || endIndex >= pointCount)
-        return;
-    
-    // Determine line properties
     float2 dir = end - start;
     float len = length(dir);
-    
-    // Skip if length is too small
+
     if (len < 0.001)
         return;
-        
-    dir = dir / len; // Normalize
-    
-    // Get segment color if enabled
-    float4 segmentColor = float4(0, 0, 0, 1);
-    bool useDefault = true;
-    
-    if (useElementColors > 0)
-    {
-        float4 pointStartColor = pointColors[startIndex];
-        float4 pointEndColor = pointColors[endIndex];
-        
-        // Use point colors if not black (use average color if they differ)
-        bool startIsBlack = IsBlack(pointStartColor);
-        bool endIsBlack = IsBlack(pointEndColor);
-        
-        if (!startIsBlack || !endIsBlack)
-        {
-            if (!startIsBlack && !endIsBlack)
-            {
-                // Weighted average to improve color transitions
-                segmentColor = lerp(pointStartColor, pointEndColor, 0.5);
-            }
-            else if (!startIsBlack)
-            {
-                segmentColor = pointStartColor;
-            }
-            else
-            {
-                segmentColor = pointEndColor;
-            }
-            useDefault = false;
-        }
-    }
-    
-    // Calculate normalized age for this line segment
-    float age = saturate((float) (currentLineIndex - idx) / 15.0);
-    float ageSquared = age * age; // Nonlinear age factor
-    
-    // Get previous segment color for smooth transitions between segments
-    float4 prevLineColor = float4(0, 0, 0, 1);
-    if (idx > 0 && idx < currentLineIndex)
-    {
-        // Try to get previous segment color
-        int prevStartIndex = path[idx - 1];
-        int prevEndIndex = path[idx];
-        
-        if (prevStartIndex >= 0 && prevEndIndex >= 0 && prevStartIndex < pointCount && prevEndIndex < pointCount)
-        {
-            if (useElementColors > 0)
-            {
-                float4 prevPointStartColor = pointColors[prevStartIndex];
-                float4 prevPointEndColor = pointColors[prevEndIndex];
-                
-                bool prevStartIsBlack = IsBlack(prevPointStartColor);
-                bool prevEndIsBlack = IsBlack(prevPointEndColor);
-                
-                if (!prevStartIsBlack || !prevEndIsBlack)
-                {
-                    if (!prevStartIsBlack && !prevEndIsBlack)
-                    {
-                        prevLineColor = lerp(prevPointStartColor, prevPointEndColor, 0.5);
-                    }
-                    else if (!prevStartIsBlack)
-                    {
-                        prevLineColor = prevPointStartColor;
-                    }
-                    else
-                    {
-                        prevLineColor = prevPointEndColor;
-                    }
-                }
-            }
-        }
-    }
-    
-    // Determine the color for the line with nonlinear HDR intensity gradient
+
+    dir /= len;
+
+    // Perpendicular direction for line width
+    float2 perpDir = float2(-dir.y, dir.x);
+
     float4 lineColor;
-    float hdrIntensity = GetHDRIntensity(idx, currentLineIndex);
+
+    float4 lineColorWhiteTint = (pointColors[endIndex] * 0.7 + float4(0.3, 0.3, 0.3, 0.0)) * startColor;
     
-    if (useDefault)
+    // If the line is within the additional 10 points in the past, set it to endColor
+    if (idx < max(0, currentLineIndex - 50))
     {
-        // Use default colors with improved nonlinear gradient
-        if (idx > currentLineIndex - 15)
-        {
-            // Newest lines get gradient colors with smoother nonlinear transition
-            float t = (float) (currentLineIndex - idx) / 15.0;
-            float tNonlinear = saturate(pow(t, 1.8)); // Nonlinear transition
-            lineColor = lerp(startColor, endColor, tNonlinear) * hdrIntensity;
-        }
-        else
-        {
-            // Older lines get solid color
-            lineColor = solidColor * hdrIntensity;
-        }
+        lineColor = pointColors[endIndex];
     }
     else
     {
-        // Use element color with appropriate intensity and improved gradient
-        if (idx > currentLineIndex - 15)
-        {
-            lineColor = segmentColor * hdrIntensity * 1.2;
-        }
-        else
-        {
-            lineColor = segmentColor * hdrIntensity;
-        }
+        // Reverse the interpolation factor for the color lerp
+        float t = 1.0 - ((float(idx) - max(0, currentLineIndex - 50)) / min(50.0, float(currentLineIndex)));
+        lineColor = lerp(lineColorWhiteTint, pointColors[endIndex], t);
     }
-    
-    // Blend with previous segment color for smoother transitions
-    if (idx > 0 && idx < currentLineIndex - 1)
-    {
-        float transitionFactor = saturate(pow(0.7, idx % 3)); // Nonlinear transition between segments
-        lineColor = lerp(lineColor, prevLineColor, transitionFactor * 0.3);
-    }
-    
-    // Always ensure alpha is 1.0
+
+
+
+    float hdrIntensity = GetHDRIntensity(idx, currentLineIndex);
+    lineColor *= hdrIntensity;
     lineColor.a = 1.0;
-    
-    // Draw the line with adaptive step size
-    float step = min(0.4, 0.8 / max(len, 1.0)); // Smaller steps for smoother rendering
-    
+
+    float step = min(0.4, 0.8 / max(len, 1.0));
     for (float t = 0.0; t <= 1.0; t += step)
     {
         float2 pos = lerp(start, end, t);
-        int2 pixel = int2(pos);
 
-        // Determine the color for the current position
-        float4 interpolatedColor;
-        if (idx == currentLineIndex - 1) // Only apply gradient to the most recent line
+        // Render line with thickness
+        for (float offset = -lineWidthPixels * 0.5; offset <= lineWidthPixels * 0.5; offset += 1.0)
         {
-            // Correct gradient direction with nonlinear interpolation
-            float tNonlinear = pow(t, 1.2); // Nonlinear transition along the line
-            interpolatedColor = lerp(endColor, startColor, tNonlinear) * hdrIntensity;
-        }
-        else
-        {
-            // Apply phosphor decay effect for older lines
-            float segmentAge = age + (1.0 - t) * 0.05; // Slightly older at start of segment
-            interpolatedColor = GetPhosphorTransitionColor(prevLineColor, lineColor, segmentAge, t);
-        }
+            float2 offsetPos = pos + perpDir * offset;
+            int2 pixel = int2(offsetPos);
 
-        // Increase drawing head size for the most recent line
-        float headMultiplier = (idx == currentLineIndex - 1) ? 1.8 : 1.0;
-        float effectiveLineWidth = lineWidthPixels * headMultiplier;
-        
-        // Calculate nonlinear width reduction for older lines
-        if (idx < currentLineIndex - 1)
-        {
-            float widthDecay = pow(1.0 - age * 0.3, 1.5); // Nonlinear width decay
-            effectiveLineWidth *= max(0.7, widthDecay);
-        }
-        
-        // Draw with thickness and anti-aliasing
-        float halfWidth = effectiveLineWidth * 0.5;
-        int radius = int(ceil(halfWidth + 2.0)); // Increased radius for larger glow
+            // Calculate pixel intensity for anti-aliasing
+            float dist = abs(offset);
+            float intensity = PixelIntensity(dist, lineWidthPixels);
 
-        for (int dy = -radius; dy <= radius; dy++)
-        {
-            for (int dx = -radius; dx <= radius; dx++)
-            {
-                float2 offset = float2(dx, dy);
-                
-                // Apply subtle shape variation to the drawing head
-                if (idx == currentLineIndex - 1)
-                {
-                    offset = VaryShape(offset, idx + t * 10.0, 0.18);
-                }
-                
-                float dist = length(offset);
-                float intensity = PixelIntensity(dist, effectiveLineWidth);
-
-                // Enhanced nonlinear glow for the drawing head
-                if (idx == currentLineIndex - 1)
-                {
-                    // Stronger glow effect with larger radius for the drawing head
-                    float glowRadius = effectiveLineWidth + 4.0;
-                    float glowFalloff = 2.2; // Higher value for more concentrated glow
-                    float normalizedDist = saturate(dist / glowRadius);
-                    float glowIntensity = saturate(pow(1.0 - normalizedDist, glowFalloff) * 0.8);
-                    intensity = max(intensity, glowIntensity);
-                }
-
-                if (intensity > 0.005) // Lower threshold for subtle effects
-                {
-                    int2 drawPos = pixel + int2(offset);
-
-                    // Get existing color for burn-in effect
-                    float4 existingColor = Result[drawPos];
-                    
-                    // Apply nonlinear intensity curve
-                    float adjustedIntensity = pow(intensity, 1.3);
-                    float4 newColor = interpolatedColor * adjustedIntensity;
-
-                    // Always ensure alpha is 1.0
-                    newColor.a = 1.0;
-                    existingColor.a = 1.0;
-
-                    // Improved blending for drawing head and recent lines
-                    if (idx == currentLineIndex - 1)
-                    {
-                        // Enhanced additive blending with HDR glow for drawing head
-                        Result[drawPos] = float4(
-                            max(existingColor.r, newColor.r * 1.3),
-                            max(existingColor.g, newColor.g * 1.3),
-                            max(existingColor.b, newColor.b * 1.3),
-                            1.0
-                        );
-                    }
-                    else
-                    {
-                        // Phosphor-like persistence with nonlinear blending
-                        float persistence = saturate(1.0 - pow(age, 1.5)); // Nonlinear persistence
-                        float blendFactor = lerp(0.97, 0.65, persistence);
-                        
-                        // Phosphor-specific color channels decay at different rates
-                        float3 channelDecay = float3(0.98, 0.99, 0.96); // RGB persistence rates
-                        float3 blendedColor = lerp(
-                            existingColor.rgb * channelDecay,
-                            newColor.rgb,
-                            blendFactor * adjustedIntensity
-                        );
-                        
-                        Result[drawPos] = float4(blendedColor, 1.0);
-                    }
-                }
-            }
+            float4 existingColor = Result[pixel];
+            Result[pixel] = lerp(existingColor, lineColor, intensity);
         }
     }
 }
+
+
+
+

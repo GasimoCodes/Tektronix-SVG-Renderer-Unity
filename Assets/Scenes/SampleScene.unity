@@ -269,40 +269,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 05eabe97d579a224ea84441727aafc60, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  svgFile: {fileID: 4900000, guid: 0dce94718567c5c4990dbbab2fe247fb, type: 3}
-  svgFilePath: E:\Projects\Tektronix\Assets\Frame 10.txt
+  svgFile: {fileID: 0}
+  svgFilePath: E:\Projects\Tektronix\Assets\frame 11.svg
   scaleFactor: 1
-  drawSpeed: 100
+  drawSpeed: 525
   solidColor: {r: 0, g: 3.0314329, b: 0, a: 1}
-  gradientStartColor: {r: 29.508842, g: 29.508842, b: 29.508842, a: 1}
+  gradientStartColor: {r: 5.992157, g: 5.992157, b: 5.992157, a: 1}
   gradientEndColor: {r: 0, g: 2.4622886, b: 0, a: 1}
   lineWidthPixels: 4
   useElementColors: 1
-  fadeOutDuration: 2
-  fadeOutCurve:
-    serializedVersion: 2
-    m_Curve:
-    - serializedVersion: 3
-      time: 0
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - serializedVersion: 3
-      time: 1
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
   lineDrawingShader: {fileID: 7200000, guid: fcd873ebaf853474fbcae301030dd7bf, type: 3}
   outputTexture: {fileID: 8400000, guid: 0764b8675880cd6468b89427060ae8db, type: 2}
 --- !u!1 &410087039
@@ -586,10 +561,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1216103896}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 1, y: 1}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: -326.3916, y: -183.5953}
+  m_SizeDelta: {x: 2563.608, y: 1906.6}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1192755103
 MonoBehaviour:
@@ -674,12 +649,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0cd44c1031e13a943bb63640046fad76, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_UiScaleMode: 0
+  m_UiScaleMode: 1
   m_ReferencePixelsPerUnit: 100
   m_ScaleFactor: 1
-  m_ReferenceResolution: {x: 800, y: 600}
+  m_ReferenceResolution: {x: 1920, y: 1920}
   m_ScreenMatchMode: 0
-  m_MatchWidthOrHeight: 0
+  m_MatchWidthOrHeight: 1
   m_PhysicalUnit: 3
   m_FallbackScreenDPI: 96
   m_DefaultSpriteDPI: 96

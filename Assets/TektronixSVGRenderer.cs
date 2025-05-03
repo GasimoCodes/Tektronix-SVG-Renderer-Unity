@@ -37,6 +37,8 @@ public class TektronixSVGRenderer : MonoBehaviour
     private int currentLineIndex = 0;
     private float drawTimer = 0f;
 
+    private Vector2 svgSize = new Vector2(0, 0); // Size of the SVG canvas
+
     private void Start()
     {
         if ((string.IsNullOrEmpty(svgFilePath) && svgFile == null) || lineDrawingShader == null || outputTexture == null)
@@ -92,8 +94,7 @@ public class TektronixSVGRenderer : MonoBehaviour
                 currentLineIndex = Mathf.Min(currentLineIndex + linesToDraw, optimizedPath.Count - 1);
                 drawTimer -= linesToDraw;
 
-                // Clear the render texture for a fresh draw
-                ClearRenderTexture();
+
 
                 // Draw all lines up to the current index
                 lineDrawingShader.SetInt("currentLineIndex", currentLineIndex);
@@ -112,6 +113,9 @@ public class TektronixSVGRenderer : MonoBehaviour
                 int dispatchSize = Mathf.Max(1, Mathf.CeilToInt(currentLineIndex / 64.0f));
                 lineDrawingShader.Dispatch(kernelHandle, dispatchSize, 1, 1);
             }
+        } else
+        {
+            Debug.Log("All lines drawn.");
         }
     }
 
@@ -127,7 +131,7 @@ public class TektronixSVGRenderer : MonoBehaviour
             return Color.black;
 
         // Handle named colors
-        if (colorStr.ToLower() == "black") return Color.black;
+        if (colorStr.ToLower() == "black") return solidColor;
         if (colorStr.ToLower() == "white") return Color.white;
         if (colorStr.ToLower() == "red") return Color.red;
         if (colorStr.ToLower() == "green") return Color.green;
@@ -214,32 +218,111 @@ public class TektronixSVGRenderer : MonoBehaviour
             return;
         }
 
-        // Parse <path> elements
+
+
+
+
+        // Handle namespaces in the SVG file
+        XmlNamespaceManager nsmgr = new XmlNamespaceManager(doc.NameTable);
+        nsmgr.AddNamespace("svg", "http://www.w3.org/2000/svg");
+
+        // Locate the <svg> element
+        XmlNode svgNode = doc.SelectSingleNode("//svg:svg", nsmgr);
+        if (svgNode != null)
+        {
+            string widthAttr = svgNode.Attributes["width"]?.Value;
+            string heightAttr = svgNode.Attributes["height"]?.Value;
+            string viewBoxAttr = svgNode.Attributes["viewBox"]?.Value;
+
+            if (!string.IsNullOrEmpty(widthAttr) && !string.IsNullOrEmpty(heightAttr))
+            {
+                svgSize = new Vector2(
+                    float.Parse(widthAttr, CultureInfo.InvariantCulture),
+                    float.Parse(heightAttr, CultureInfo.InvariantCulture)
+                );
+            }
+            else if (!string.IsNullOrEmpty(viewBoxAttr))
+            {
+                string[] viewBoxValues = viewBoxAttr.Split(' ');
+                if (viewBoxValues.Length == 4)
+                {
+                    svgSize = new Vector2(
+                        float.Parse(viewBoxValues[2], CultureInfo.InvariantCulture),
+                        float.Parse(viewBoxValues[3], CultureInfo.InvariantCulture)
+                    );
+                }
+            }
+            else
+            {
+                Debug.LogWarning("SVG canvas size not found. Defaulting to (1, 1).");
+                svgSize = new Vector2(1, 1); // Default size
+            }
+
+            Debug.Log($"SVG canvas size: {svgSize.x}x{svgSize.y}");
+        }
+        else
+        {
+            Debug.LogError("No <svg> element found in the file.");
+            return;
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         XmlNodeList paths = doc.GetElementsByTagName("path");
         foreach (XmlNode pathNode in paths)
         {
             string dAttribute = pathNode.Attributes["d"]?.Value;
+
             if (!string.IsNullOrEmpty(dAttribute))
             {
-                // Try to get stroke color
+                Debug.Log($"pathing...");
+
+                // Get color
                 string strokeAttr = pathNode.Attributes["stroke"]?.Value;
-                Color strokeColor = Color.black;
+                Color strokeColor = solidColor;
+
                 if (!string.IsNullOrEmpty(strokeAttr))
                 {
                     strokeColor = ParseColor(strokeAttr);
                 }
+                else
+                {
+                    strokeAttr = pathNode.Attributes["fill"]?.Value;
+                    if (!string.IsNullOrEmpty(strokeAttr) && !IsBlack(ParseColor(strokeAttr)))
+                    {
+                        strokeColor = ParseColor(strokeAttr);
+                    }
+                }
 
+                // Parse the path data
                 SVGPathParser parser = new SVGPathParser();
                 List<Vector2[]> segments = parser.ParsePath(dAttribute);
 
+                // Add each segment separately 
                 foreach (var segment in segments)
                 {
+
+
+                    // Add each point pair in this segment
                     for (int i = 0; i < segment.Length - 1; i++)
                     {
+
                         points.Add(segment[i]);
                         points.Add(segment[i + 1]);
 
-                        // Add color for both points
+                        // Add colors
                         pointColors.Add(strokeColor);
                         pointColors.Add(strokeColor);
                     }
@@ -258,7 +341,7 @@ public class TektronixSVGRenderer : MonoBehaviour
 
             // Get stroke color
             string strokeAttr = lineNode.Attributes["stroke"]?.Value;
-            Color strokeColor = Color.black;
+            Color strokeColor = solidColor;
             if (!string.IsNullOrEmpty(strokeAttr))
             {
                 strokeColor = ParseColor(strokeAttr);
@@ -283,7 +366,7 @@ public class TektronixSVGRenderer : MonoBehaviour
 
             // Get stroke color
             string strokeAttr = rectNode.Attributes["stroke"]?.Value;
-            Color strokeColor = Color.black;
+            Color strokeColor = solidColor;
             if (!string.IsNullOrEmpty(strokeAttr))
             {
                 strokeColor = ParseColor(strokeAttr);
@@ -322,32 +405,39 @@ public class TektronixSVGRenderer : MonoBehaviour
             return;
         }
 
+        if (svgSize.x <= 0 || svgSize.y <= 0)
+        {
+            Debug.LogError("Invalid SVG canvas size. Ensure the SVG file specifies valid dimensions.");
+            return;
+        }
+
+        // Get the texture dimensions
         float textureWidth = outputTexture.width;
         float textureHeight = outputTexture.height;
 
-        // Find the bounds of the SVG points
-        Vector2 min = points[0];
-        Vector2 max = points[0];
-        foreach (var point in points)
-        {
-            min = Vector2.Min(min, point);
-            max = Vector2.Max(max, point);
-        }
+        // Calculate the scale factors for X and Y based on the ratio of texture size to SVG canvas size
+        float scaleX = textureWidth / svgSize.x;
+        float scaleY = textureHeight / svgSize.y;
 
-        // Calculate scale and offset to fit points into the texture
-        Vector2 size = max - min;
-        float scale = Mathf.Min(textureWidth / size.x, textureHeight / size.y) * scaleFactor;
-        Vector2 offset = new Vector2(-min.x * scale, -min.y * scale);
-
-        // Normalize points and flip the Y-axis
+        // Normalize points to fit the texture and flip the Y-axis
         for (int i = 0; i < points.Count; i++)
         {
-            points[i] = new Vector2(points[i].x * scale + offset.x, textureHeight - (points[i].y * scale + offset.y));
+            points[i] = new Vector2(
+                points[i].x * scaleX,                          // Scale X position
+                textureHeight - (points[i].y * scaleY)         // Scale Y position and flip Y-axis
+            );
         }
+
+        Debug.Log("Points scaled to match the texture size.");
     }
 
+
+
+
+
     private void OptimizePath()
-    {
+    {        
+        
         // Group points into subpaths
         List<List<int>> subpaths = new List<List<int>>();
         for (int i = 0; i < points.Count; i += 2)
@@ -362,6 +452,7 @@ public class TektronixSVGRenderer : MonoBehaviour
             optimizedPath.AddRange(subpath);
             optimizedPath.Add(-1); // Add a break marker after each subpath
         }
+
     }
 
     private void SetupComputeShader()
